@@ -1,0 +1,235 @@
+---
+title: "Lecture 2 — Intermediate/Advanced BigQuery for GA4"
+subtitle: "GA4 BigQuery Analysis Report"
+author: "Bhamini Raghuram Pillai"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    self-contained: true
+    theme: cosmo
+---
+
+# Introduction
+
+This report demonstrates intermediate and advanced BigQuery concepts using the GA4 ecommerce sample dataset provided in Google BigQuery. The report includes SQL queries, explanations, and screenshots of outputs generated from BigQuery.
+
+## Query 1 — Total Users and New Users
+
+### Concept: CTEs (WITH)
+
+This query uses a Common Table Expression (CTE) to identify total users and new users in the GA4 ecommerce dataset during November 2020. The query checks whether users triggered the `first_visit` or `first_open` event and classifies them as new users.
+
+``` sql
+WITH UserInfo AS (
+
+SELECT
+  user_pseudo_id,
+
+  MAX(
+    IF(event_name IN ('first_visit', 'first_open'), 1, 0)
+  ) AS is_new_user
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+
+WHERE _TABLE_SUFFIX BETWEEN '20201101' AND '20201130'
+
+GROUP BY user_pseudo_id
+
+)
+
+SELECT
+  COUNT(*) AS total_users,
+  SUM(is_new_user) AS new_users
+
+FROM UserInfo;
+```
+
+![](images/query1.png) {width=70%}
+
+## Query 2 — Extract Page Location
+
+### Concept: Arrays + UNNEST
+
+This query extracts the `page_location` parameter from the `event_params` array in the GA4 dataset. It demonstrates how to use `UNNEST` to retrieve nested values from arrays without expanding rows unnecessarily.
+
+``` sql
+SELECT
+
+TIMESTAMP_MICROS(event_timestamp) AS event_time,
+
+(
+SELECT value.string_value
+FROM UNNEST(event_params)
+WHERE key = 'page_location'
+LIMIT 1
+) AS page_location
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+
+WHERE event_name = 'page_view'
+
+AND _TABLE_SUFFIX BETWEEN '20201201' AND '20201202'
+
+LIMIT 50;
+```
+
+![](images/query2.png) {width=70%}
+
+## Query 3 — Item-Level Purchase Analysis
+
+### Concept: UNNEST + Item-Level Analysis
+
+This query analyzes purchased products by flattening the `items` array using `UNNEST`. After unnesting, each row represents an individual item rather than a single event. The query counts how many times products appeared in purchase events during December 2020.
+
+``` sql
+SELECT
+
+event_date,
+
+item.item_name,
+
+COUNT(*) AS item_rows
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` e,
+
+UNNEST(e.items) AS item
+
+WHERE e.event_name = 'purchase'
+
+AND _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
+
+GROUP BY event_date, item.item_name
+
+ORDER BY item_rows DESC
+
+LIMIT 20;
+```
+
+------------------------------------------------------------------------
+
+![](images/query3.png) {width=70%}
+
+## Query 4 — Events Seen Per Day
+
+### Concept: STRING_AGG
+
+This query uses `STRING_AGG` to combine multiple event names into a single comma-separated list for each day. It helps summarize which user activities occurred during specific dates in the GA4 dataset.
+
+``` sql
+SELECT
+
+event_date,
+
+STRING_AGG(
+DISTINCT event_name,
+', '
+ORDER BY event_name
+) AS events_seen
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201203'
+
+GROUP BY event_date
+
+ORDER BY event_date;
+```
+
+![](images/query4.png) {width=70%}
+
+## Query 5 — Items Added to Cart
+
+### Concept: ARRAY_AGG
+
+This query uses `ARRAY_AGG` to create a list of items each user added to their cart. The query unnests the `items` array and groups products by user to summarize cart activity.
+
+``` sql
+SELECT
+
+user_pseudo_id,
+
+ARRAY_AGG(item.item_name) AS items_added_to_cart
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`,
+
+UNNEST(items) AS item
+
+WHERE event_name = 'add_to_cart'
+
+AND _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
+
+GROUP BY user_pseudo_id
+
+ORDER BY user_pseudo_id
+
+LIMIT 10;
+```
+
+![](images/query5.png) {width=70%}
+
+## Query 6 — Session Cart Summary
+
+### Concept: ARRAY_AGG + STRUCT + Session Analysis
+
+This query analyzes shopping cart activity at the session level. It extracts the GA session ID from nested event parameters and summarizes products added to cart during each session.
+
+The query uses ARRAY_AGG together with STRUCT to create a nested summary of cart items, including item details, quantities, prices, and timestamps.
+
+``` sql
+WITH add_to_cart AS (
+
+SELECT
+
+user_pseudo_id,
+
+(
+SELECT value.int_value
+FROM UNNEST(event_params)
+WHERE key = 'ga_session_id'
+LIMIT 1
+) AS session_id,
+
+items
+
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+
+WHERE event_name = 'add_to_cart'
+
+AND _TABLE_SUFFIX BETWEEN '20210131' AND '20210131'
+
+)
+
+SELECT
+
+user_pseudo_id,
+
+session_id,
+
+ARRAY_LENGTH(items) AS total_add_to_cart_items,
+
+ARRAY_AGG(
+STRUCT(
+cart_items.item_id,
+cart_items.item_name,
+cart_items.quantity,
+cart_items.price
+)
+) AS cart_items
+
+FROM add_to_cart,
+
+UNNEST(items) AS cart_items
+
+GROUP BY user_pseudo_id, session_id
+
+LIMIT 10;
+```
+
+![](images/query6.png) {width=70%}
+
+# Published Web Page
+
+GitHub Pages Link: <https://bhamini2606.github.io/lecture2-ga4/>
